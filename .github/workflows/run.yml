@@ -1,9 +1,8 @@
-name: Binance Alpha Scanner
+name: alpha-monitor
 
 on:
   schedule:
-    - cron: "0 0 * * *"    # 北京时间 08:00
-    - cron: "0 12 * * *"   # 北京时间 20:00
+    - cron: "0 */12 * * *"
   workflow_dispatch:
 
 jobs:
@@ -11,18 +10,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 拉代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Python环境
-        uses: actions/setup-python@v5
+      - name: setup python
+        uses: actions/setup-python@v4
         with:
           python-version: "3.10"
 
-      - name: 安装依赖
+      - name: install deps
         run: pip install -r requirements.txt
 
-      - name: 运行脚本
+      - name: run script
         env:
           GOOGLE_CREDS: ${{ secrets.GOOGLE_CREDS }}
         run: python main.py

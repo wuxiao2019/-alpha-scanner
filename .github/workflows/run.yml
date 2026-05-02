@@ -1,0 +1,38 @@
+name: Alpha Scanner  # 工作流的名字
+
+# 触发条件
+on:
+  schedule:
+    # 每12小时运行一次（UTC时间 0:00 和 12:00）
+    - cron: "0 */12 * * *"
+  # 也允许手动触发（点击按钮就能运行）
+  workflow_dispatch:
+
+# 任务定义
+jobs:
+  scan:
+    runs-on: ubuntu-latest  # 在 Linux 系统上运行
+    
+    steps:
+      # 第1步：下载代码
+      - name: 下载代码
+        uses: actions/checkout@v4
+      
+      # 第2步：安装 Python
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      
+      # 第3步：安装依赖包
+      - name: 安装工具包
+        run: pip install -r requirements.txt
+      
+      # 第4步：写入 Google 凭证
+      - name: 配置凭证
+        run: |
+          echo '${{ secrets.GOOGLE_CREDS }}' > credentials.json
+      
+      # 第5步：运行程序
+      - name: 开始扫描
+        run: python main.py

@@ -1,5 +1,3 @@
 requests
-pandas
-web3
 gspread
 google-auth

@@ -2,24 +2,17 @@ import requests
 import time
 import base64
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import gspread
 from google.oauth2.service_account import Credentials
-from config import SHEET_ID
+
+from config import *
 
 session = requests.Session()
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-}
-
-API = "https://www.binance.com/bapi/defi/v1/public/alpha/tokens"
-
-
-def get_beijing_time():
-    return datetime.utcnow() + timedelta(hours=8)
-
-
+# ===== 初始化凭证 =====
 def init_credentials():
     creds_base64 = os.getenv("GOOGLE_CREDS")
     if creds_base64:
@@ -27,6 +20,12 @@ def init_credentials():
             f.write(base64.b64decode(creds_base64))
 
 
+# ===== 北京时间 =====
+def get_beijing_time():
+    return datetime.now(ZoneInfo("Asia/Shanghai"))
+
+
+# ===== 连接 Sheet =====
 def connect_sheet():
     creds = Credentials.from_service_account_file(
         "credentials.json",
@@ -36,102 +35,174 @@ def connect_sheet():
     return client.open_by_key(SHEET_ID).sheet1
 
 
-def fetch(page):
-    url = f"{API}?page={page}&size=20"
+# ===== Binance Alpha =====
+def fetch_alpha(page):
+    url = f"https://www.binance.com/bapi/defi/v1/public/alpha/tokens?page={page}&size=20"
     try:
-        res = session.get(url, headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            return res.json()
+        return session.get(url, timeout=10).json()
     except:
         return None
 
 
-def get_tokens():
-    tokens_all = []
+def get_alpha_tokens():
+    tokens = []
     seen = set()
 
     for page in range(1, 100):
-        data = fetch(page)
+        data = fetch_alpha(page)
         if not data:
             break
 
-        tokens = data.get("data", {}).get("list", [])
-        if not tokens:
+        lst = data.get("data", {}).get("list", [])
+        if not lst:
             break
 
-        for t in tokens:
-            symbol = t.get("symbol")
-            if not symbol or symbol in seen:
+        for t in lst:
+            symbol = (
+                t.get("baseAsset") or
+                t.get("tokenSymbol") or
+                t.get("symbol") or
+                t.get("name")
+            )
+
+            if not symbol:
+                continue
+
+            symbol = symbol.upper()
+
+            # 清洗
+            if len(symbol) > 12 or " " in symbol:
+                continue
+
+            if symbol in seen:
                 continue
 
             seen.add(symbol)
 
             try:
-                tokens_all.append({
+                tokens.append({
                     "symbol": symbol,
-                    "price": float(t.get("price", 0)),
-                    "market_cap": float(t.get("marketCap", 0)),
-                    "volume": float(t.get("volume24h", 0)),
-                    "change": float(t.get("priceChangePercent", 0)),
-                    "url": f"https://www.binance.com/zh-CN/alpha/{symbol}"
+                    "market_cap": float(t.get("marketCap", 0))
                 })
             except:
                 continue
 
-        if len(tokens) < 20:
+        if len(lst) < 20:
             break
 
         time.sleep(0.2)
 
-    return tokens_all
+    return tokens
 
 
-def risk_check(mcap, vol, change):
+# ===== Binance Spot =====
+def get_spot_symbols():
+    url = "https://api.binance.com/api/v3/exchangeInfo"
+    data = session.get(url).json()
+    return {s["baseAsset"] for s in data["symbols"]}
+
+
+# ===== Dexscreener =====
+def get_dex(symbol):
+    url = f"https://api.dexscreener.com/latest/dex/search?q={symbol}"
+
+    try:
+        data = session.get(url, timeout=10).json()
+        pairs = data.get("pairs", [])
+
+        if not pairs:
+            return None
+
+        best = max(pairs, key=lambda x: x.get("liquidity", {}).get("usd", 0))
+
+        return {
+            "price": float(best.get("priceUsd", 0)),
+            "liquidity": float(best.get("liquidity", {}).get("usd", 0)),
+            "volume": float(best.get("volume", {}).get("h24", 0)),
+            "url": best.get("url")
+        }
+    except:
+        return None
+
+
+# ===== 风险 =====
+def risk(mcap, liq, vol, listed):
     score = 0
-    if mcap < 50000:
-        score += 20
-    if vol < 1000:
-        score += 20
-    if abs(change) > 50:
-        score += 20
+    reasons = []
 
-    if score >= 40:
-        return "HIGH"
-    elif score >= 20:
-        return "MEDIUM"
-    return "LOW"
+    if mcap < LOW_MARKET_CAP:
+        score += 30
+        reasons.append("低市值")
+
+    if liq < LOW_LIQUIDITY:
+        score += 25
+        reasons.append("低流动性")
+
+    if vol < LOW_VOLUME:
+        score += 15
+        reasons.append("低交易量")
+
+    if not listed:
+        score += 10
+        reasons.append("未上币安")
+
+    if score >= 50:
+        return "HIGH", ",".join(reasons)
+    elif score >= 25:
+        return "MEDIUM", ",".join(reasons)
+    return "LOW", "正常"
 
 
+# ===== 主流程 =====
 def main():
     print("启动:", get_beijing_time())
 
     init_credentials()
     sheet = connect_sheet()
 
-    tokens = get_tokens()
-
-    now = get_beijing_time().strftime("%Y-%m-%d %H:%M")
+    alpha = get_alpha_tokens()
+    spot = get_spot_symbols()
 
     rows = []
-    for t in tokens:
-        if t["market_cap"] and t["market_cap"] < 1_000_000:
-            risk = risk_check(t["market_cap"], t["volume"], t["change"])
+    now = get_beijing_time().strftime("%Y-%m-%d %H:%M:%S")
 
-            rows.append([
-                now,
-                t["symbol"],
-                t["price"],
-                t["market_cap"],
-                t["volume"],
-                t["change"],
-                risk,
-                t["url"]
-            ])
+    for t in alpha:
+        symbol = t["symbol"]
+        mcap = t["market_cap"]
+
+        if not mcap or mcap > MAX_MARKET_CAP:
+            continue
+
+        dex = get_dex(symbol)
+        if not dex:
+            continue
+
+        if dex["liquidity"] < MIN_LIQUIDITY:
+            continue
+
+        listed = symbol in spot
+
+        r, reason = risk(mcap, dex["liquidity"], dex["volume"], listed)
+
+        rows.append([
+            now,
+            symbol,
+            dex["price"],
+            mcap,
+            dex["liquidity"],
+            dex["volume"],
+            "是" if listed else "否",
+            r,
+            reason,
+            dex["url"]
+        ])
+
+        time.sleep(0.2)
 
     if rows:
         sheet.append_rows(rows, value_input_option="RAW")
 
-    print("完成，数量:", len(rows))
+    print("完成:", len(rows))
 
 
 if __name__ == "__main__":

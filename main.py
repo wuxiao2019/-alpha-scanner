@@ -9,23 +9,22 @@ import config
 
 # ===== 第一部分：连接 Google 表格 =====
 def connect_sheet():
-    """
-    这个函数就像机器人的"钥匙"，用来打开你的 Google 表格
-    """
     try:
-        # 读取凭证文件
         creds = Credentials.from_service_account_file(
             "credentials.json",
-            scopes=["https://www.googleapis.com/auth/spreadsheets",
-                   "https://www.googleapis.com/auth/drive"]
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
-        # 授权并打开表格
         client = gspread.authorize(creds)
-        sheet = client.open(config.SHEET_NAME).sheet1
+        
+        # 用表格 ID 直接打开，不需要 Drive API
+        SHEET_ID = "1GYsNqDXZn-VXvJfVE0QRQg4b02zKVWjgPww19O4qHtE"  # ← 替换成你的真实表格ID！
+        sheet = client.open_by_key(SHEET_ID).sheet1
+        print("✅ 成功连接 Google 表格")
         return sheet
     except Exception as e:
-        print(f"连接表格失败: {e}")
+        print(f"❌ 连接表格失败: {e}")
         return None
+
 
 # ===== 第二部分：获取区块链数据 =====
 def get_token_info(contract_address, chain="bsc"):

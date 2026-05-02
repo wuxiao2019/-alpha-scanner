@@ -1,5 +1,57 @@
 import requests
 import time
+
+def fetch_with_retry(url, headers=None, max_retries=3, timeout=15):
+    """
+    带重试机制的 HTTP 请求
+    
+    参数:
+        url: 要请求的网址
+        headers: 请求头（模拟浏览器）
+        max_retries: 最大重试次数
+        timeout: 超时时间（秒）
+    
+    返回:
+        成功: response 对象
+        失败: None
+    """
+    for i in range(max_retries):
+        try:
+            print(f"  第 {i+1} 次请求: {url[:60]}...")
+            response = requests.get(url, headers=headers, timeout=timeout)
+            
+            # 状态码 200 表示成功
+            if response.status_code == 200:
+                print(f"  ✅ 请求成功")
+                return response
+            
+            # 状态码 429 表示请求太频繁，需要等待
+            elif response.status_code == 429:
+                wait_time = 5 * (i + 1)
+                print(f"  ⏳ 请求太频繁，等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+            
+            # 其他错误状态码
+            else:
+                print(f"  ❌ 状态码: {response.status_code}")
+                if i < max_retries - 1:
+                    time.sleep(2 ** i)  # 指数退避: 1秒, 2秒, 4秒
+            
+        except requests.exceptions.Timeout:
+            print(f"  ⏱️ 请求超时")
+            if i < max_retries - 1:
+                time.sleep(2 ** i)
+                
+        except Exception as e:
+            print(f"  💥 请求异常: {e}")
+            if i < max_retries - 1:
+                time.sleep(2 ** i)
+    
+    print(f"  ❌ {max_retries} 次重试后仍然失败")
+    return None
+
+import requests
+import time
 import json
 from datetime import datetime
 from web3 import Web3
